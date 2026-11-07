@@ -49,13 +49,40 @@ GetTile:
         pop bp
         ret 4
 
-; SetTile(col, row, code)                      Module 3 (working map)
-;   [bp+8]=col [bp+6]=row [bp+4]=code
+; ------------------------------------------------------------
+; SetTile(col, row, code)                              Module 3
+; Purpose : write one tile code into the WORKING map (map_original
+;           is never touched). Used when a block is hit, a brick
+;           breaks or a coin is taken. index = row*60 + col.
+;           A col or row outside the map is ignored.
+; Inputs  : [bp+8] = col   [bp+6] = row   [bp+4] = code (low byte)
+; Outputs : none
+; Changes : none (AX, BX, CX are saved and restored)
+; ------------------------------------------------------------
 SetTile:
-    push bp
-    mov bp, sp
-    pop bp
-    ret 6
+        push bp
+        mov bp, sp
+        push ax
+        push bx
+        push cx
+        mov ax, [bp+6]              ; row
+        cmp ax, MAP_H
+        jae .out                    ; unsigned: also catches negative row
+        mov bx, [bp+8]              ; col
+        cmp bx, MAP_W
+        jae .out                    ; same for col
+        mov cx, ax
+        shl ax, 6                   ; row * 64
+        shl cx, 2                   ; row * 4
+        sub ax, cx                  ; row * 60
+        add bx, ax                  ; bx = row*60 + col
+        mov al, [bp+4]              ; new tile code
+        mov [map_working+bx], al
+.out:   pop cx
+        pop bx
+        pop ax
+        pop bp
+        ret 6
 
 ; DrawMap     draws the visible part using camera_x   Module 3 / 6
 DrawMap:
