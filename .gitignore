@@ -1,0 +1,4 @@
+# MARIO.COM is NOT ignored: the submission needs it in the repo.
+*.lst
+*.bak
+*.tmp
