@@ -88,9 +88,36 @@ SetTile:
 DrawMap:
     ret
 
-; ResetMap    map_original -> map_working with REP MOVSB/W   Module 3
+; ------------------------------------------------------------
+; ResetMap                                             Module 3
+; Purpose : copy the untouched map_original over map_working with
+;           ONE block move (REP MOVSW). Used at every new life and
+;           new game, so broken bricks, used ? blocks and taken
+;           coins come back.
+; Inputs  : none
+; Outputs : none
+; Changes : none (CX, SI, DI, ES are saved and restored)
+; ------------------------------------------------------------
+%if MAP_SIZE & 1
+%error "ResetMap copies words: MAP_SIZE must be even"
+%endif
 ResetMap:
-    ret
+        push cx
+        push si
+        push di
+        push es
+        push ds
+        pop es                      ; ES = DS (a .COM has one segment)
+        mov si, map_original        ; source      DS:SI
+        mov di, map_working         ; destination ES:DI
+        mov cx, MAP_SIZE/2          ; 720 bytes = 360 words
+        cld                         ; copy forwards
+        rep movsw
+        pop es
+        pop di
+        pop si
+        pop cx
+        ret
 
 ; DrawSprite(x, y, addr, flags)                Module 4
 ;   [bp+10]=x [bp+8]=y [bp+6]=addr [bp+4]=flags (bit0 = mirror)
