@@ -6,14 +6,48 @@
 ; NOTE: PutPixel and FillRect (Module 2) are written by Person 1 in engine.asm.
 ; Every drawing procedure draws into the FRAME BUFFER, never into A000h.
 
-; GetTile(px, py)  -> AX = tile code           Module 3
-;   [bp+6]=px  [bp+4]=py   (pixel position in the WORLD)
+; ------------------------------------------------------------
+; GetTile(px, py)                                      Module 3
+; Purpose : pixel position in the WORLD -> tile code from the
+;           working map.  col = px >> 4, row = py >> 4,
+;           index = row*60 + col  (row*60 = row*64 - row*4).
+;           Outside the level: px < 0 or px >= 960 -> T_GROUND
+;           (solid wall); py < 0 or py >= 192 -> T_SKY.
+; Inputs  : [bp+6] = px (signed)   [bp+4] = py (signed)
+; Outputs : AX = tile code
+; Changes : AX only
+; ------------------------------------------------------------
+%if MAP_W != 60
+%error "GetTile multiplies by 60 with shifts: change it if MAP_W changes"
+%endif
 GetTile:
-    push bp
-    mov bp, sp
-    xor ax, ax
-    pop bp
-    ret 4
+        push bp
+        mov bp, sp
+        push bx
+        push cx
+        mov bx, [bp+6]              ; px
+        cmp bx, LEVEL_PX
+        jae .wall                   ; unsigned compare: negative px is huge, so caught too
+        mov ax, [bp+4]              ; py
+        cmp ax, MAP_H*TILE
+        jae .sky                    ; same trick for py < 0
+        shr bx, TILE_SHIFT          ; bx = col
+        shr ax, TILE_SHIFT          ; ax = row
+        mov cx, ax
+        shl ax, 6                   ; row * 64
+        shl cx, 2                   ; row * 4
+        sub ax, cx                  ; row * 60
+        add bx, ax                  ; bx = row*60 + col
+        mov al, [map_working+bx]    ; indexed addressing
+        xor ah, ah                  ; AX = tile code (0..12)
+        jmp .out
+.wall:  mov ax, T_GROUND
+        jmp .out
+.sky:   mov ax, T_SKY
+.out:   pop cx
+        pop bx
+        pop bp
+        ret 4
 
 ; SetTile(col, row, code)                      Module 3 (working map)
 ;   [bp+8]=col [bp+6]=row [bp+4]=code
