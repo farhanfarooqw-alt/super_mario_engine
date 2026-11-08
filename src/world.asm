@@ -84,9 +84,112 @@ SetTile:
         pop bp
         ret 6
 
-; DrawMap     draws the visible part using camera_x   Module 3 / 6
+; ------------------------------------------------------------
+; DrawTile(x, y, code)                                 Module 3
+; Purpose : draw ONE 16x16 tile into the frame buffer at screen
+;           position (x, y) (top-left, signed, may be partly off-
+;           screen: FillRect clips). For now a tile is a coloured
+;           rectangle taken from tile_colour (looked up by tile
+;           code); Module 4 replaces it with real art.
+;           Sky is not drawn (ClearBuffer already made the sky).
+; Inputs  : [bp+8] = x   [bp+6] = y   [bp+4] = tile code
+; Outputs : none
+; Changes : none (AX, BX are saved and restored)
+; ------------------------------------------------------------
+DrawTile:
+        push bp
+        mov bp, sp
+        push ax
+        push bx
+        mov bx, [bp+4]              ; tile code
+        cmp bx, T_SKY
+        je .out                     ; sky: nothing to draw
+        cmp bx, T_FLAG
+        ja .out                     ; unknown code: ignore (unsigned)
+        mov al, [tile_colour+bx]    ; colour index for this tile
+        xor ah, ah
+        push word [bp+8]            ; x
+        push word [bp+6]            ; y
+        push word TILE              ; w
+        push word TILE              ; h
+        push ax                     ; colour
+        call FillRect
+.out:   pop bx
+        pop ax
+        pop bp
+        ret 6
+
+; tile_colour : default-palette colour for each tile code 0..12
+;   sky ground brick ?coin ?mush empty pipeTL pipeTR pipeBL pipeBR stair coin flag
+tile_colour:
+        db COL_SKY, COL_GROUND, COL_BRICK, 12, 12, 8, 10, 10, COL_PIPE, COL_PIPE, 7, COL_COIN, COL_TEXT
+
+; ------------------------------------------------------------
+; DrawMap                                              Module 3 / 6
+; Purpose : draw the visible part of the working map into the frame
+;           buffer: 20 columns + 1 partial column, starting at
+;           column camera_x >> 4, shifted left by camera_x & 15
+;           pixels, so the picture scrolls one pixel at a time.
+;           Row 0 is the HUD strip (DrawHUD paints it), so tile rows
+;           1..11 are drawn. The bottom 8 pixels stay black (A.1).
+; Inputs  : none (reads camera_x and map_working)
+; Outputs : none
+; Changes : none (AX, BX, CX, DX, SI, DI are saved and restored)
+; Registers inside: SI = map column, DI = screen x of that column,
+;           CX = columns left to draw, DX = map row
+; ------------------------------------------------------------
 DrawMap:
-    ret
+        push ax
+        push bx
+        push cx
+        push dx
+        push si
+        push di
+        mov ax, [camera_x]
+        mov si, ax
+        shr si, TILE_SHIFT          ; si = first column = camera_x / 16
+        and ax, TILE-1              ; ax = camera_x mod 16
+        mov di, ax
+        neg di                      ; di = screen x of the first column (0 to -15)
+        mov cx, VIEW_COLS+1         ; 20 columns + 1 partial = 21
+.col:   cmp si, MAP_W
+        jae .done                   ; past the last map column: nothing more to draw
+        mov dx, 1                   ; start at row 1 (row 0 = HUD)
+.row:   mov ax, dx
+        shl ax, 6                   ; row * 64
+        mov bx, dx
+        shl bx, 2                   ; row * 4
+        sub ax, bx                  ; row * 60
+        add ax, si                  ; + column
+        mov bx, ax
+        mov al, [map_working+bx]    ; tile code at (si, dx)
+        xor ah, ah
+        push di                     ; x on the screen
+        mov bx, dx
+        shl bx, TILE_SHIFT          ; y = row * 16
+        push bx
+        push ax                     ; tile code
+        call DrawTile
+        inc dx
+        cmp dx, MAP_H
+        jb .row
+        add di, TILE                ; next column, 16 pixels to the right
+        inc si
+        dec cx
+        jnz .col
+.done:  push word 0                 ; black strip y = 192..199
+        push word MAP_H*TILE
+        push word SCREEN_W
+        push word SCREEN_H-MAP_H*TILE
+        push word COL_BLACK
+        call FillRect
+        pop di
+        pop si
+        pop dx
+        pop cx
+        pop bx
+        pop ax
+        ret
 
 ; ------------------------------------------------------------
 ; ResetMap                                             Module 3
