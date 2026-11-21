@@ -40,6 +40,8 @@ hero_hp         db 1
 hero_face       db 1                ; 1 = right, 0 = left
 hero_invuln     dw 0
 hero_stomp      dw 0                ; stomp chain counter
+hero_dead       db 0                ; 1 = Mario must die (enemy, pit)
+level_won       db 0                ; 1 = flag pole touched
 
 ; ---- Enemies (Person 3 writes) ----
 enemy_table     times ENEMY_COUNT*ENEMY_SIZE db 0
