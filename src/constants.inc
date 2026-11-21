@@ -120,3 +120,12 @@ COL_BRICK       equ 4
 COL_PIPE        equ 2
 COL_COIN        equ 14
 COL_TEXT        equ 15
+
+; ---- Added for Modules 14 and 15 (Person 1) ----
+FLAG_COL          equ 56            ; column of the flag pole in level.inc
+WIN_SLIDE_FRAMES  equ FRAME_HZ      ; slide down the pole, about 1 s
+WIN_WALK_FRAMES   equ FRAME_HZ      ; walk to the castle, about 1 s
+DEATH_HOP         equ 0FB00h        ; -5.0 px/frame: rises about 50 px (Manual 5.8)
+SC_K              equ 25h           ; debug key: kill Mario
+SC_W              equ 11h           ; debug key: touch the flag (win)
+SC_T              equ 14h           ; debug key: set the clock to 5 seconds

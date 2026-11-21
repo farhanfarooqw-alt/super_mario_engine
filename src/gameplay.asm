@@ -25,3 +25,28 @@ UpdateEnemies:
 ; ResolveCollisions   Mario vs enemies/items/blocks (Section 5.6 order)
 ResolveCollisions:
     ret
+
+; ------------------------------------------------------------
+; ResetHero / ResetEnemies  -  MINIMAL versions written by Person 1
+; so that ResetLevel works. Person 3: replace these with the real
+; ones (enemy table from enemy_spawns, etc.).
+; ------------------------------------------------------------
+ResetHero:
+        mov word [hero_x], START_X
+        mov byte [hero_x_fr], 0
+        mov word [hero_y], START_Y_FEET-16   ; Small Mario, feet on the ground
+        mov byte [hero_y_fr], 0
+        mov word [hero_vx], 0
+        mov word [hero_vy], 0
+        mov byte [hero_on_ground], 1
+        mov byte [hero_form], FORM_SMALL
+        mov byte [hero_hp], 1
+        mov byte [hero_face], 1
+        mov word [hero_invuln], 0
+        mov word [hero_stomp], 0
+        mov byte [hero_dead], 0
+        mov byte [level_won], 0
+        ret
+
+ResetEnemies:
+        ret
