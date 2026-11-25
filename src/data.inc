@@ -16,6 +16,18 @@ clock_last      dw 0                ; tick_count value at the last clock step
 clock_run       db 0                ; 1 = clock counts, 0 = frozen
 chain_acc       dw 0                ; decides when to chain the old timer handler
 
+key_hit         times 128 db 0      ; 1 = key went down since it was last asked (set by the ISR)
+state_timer     dw 0                ; frames spent in the current state
+screen_dirty    db 1                ; 1 = a still screen must be redrawn once
+menu_sel        db 0                ; title menu: 0 = START GAME, 1 = EXIT
+win_time        dw 0                ; clock value when the flag was touched
+win_bonus       dw 0                ; time left * 50
+win_score_lo    dw 0                ; score before the time bonus (for the screen)
+win_score_hi    dw 0
+font_off        dw 0                ; BIOS 8x8 font (INT 10h AX=1130h)
+font_seg        dw 0
+glyph_buf       times 8 db 0        ; one character copied from the font
+
 ; ---- Camera (Person 2 writes) ----
 camera_x        dw 0
 
@@ -40,8 +52,8 @@ hero_hp         db 1
 hero_face       db 1                ; 1 = right, 0 = left
 hero_invuln     dw 0
 hero_stomp      dw 0                ; stomp chain counter
-hero_dead       db 0                ; 1 = Mario must die (enemy, pit)
-level_won       db 0                ; 1 = flag pole touched
+hero_dead       db 0                ; 1 = Mario must die (Person 3 sets, Person 1 reads)
+level_won       db 0                ; 1 = flag touched   (Person 3 sets, Person 1 reads)
 
 ; ---- Enemies (Person 3 writes) ----
 enemy_table     times ENEMY_COUNT*ENEMY_SIZE db 0

@@ -31,6 +31,19 @@ InitEngine:
         mov [fb_seg], ax
         mov ax, 0013h
         int 10h                     ; VGA Mode 13h
+        push cx
+        push dx
+        push bp
+        mov ax, 1130h               ; get a pointer to the BIOS 8x8 font
+        mov bh, 03h
+        int 10h                     ; ES:BP = font (128 characters x 8 bytes)
+        mov [font_off], bp
+        mov [font_seg], es
+        pop bp
+        pop dx
+        pop cx
+        push cs
+        pop es                      ; ES = our segment again
         call InstallKeyboard
         call InstallTimer
         clc
@@ -184,8 +197,8 @@ FillRect:
 ; ============================================================
 
 ; ------------------------------------------------------------
-; ClearBuffer   fill the frame buffer with the sky colour
-;               (REP STOSW, 32000 words, not a pixel loop)
+; ClearBuffer   sky colour for rows 0-191, black for the last 8 rows
+;               (REP STOSW, not a pixel loop)
 ; Inputs/Outputs : none      Changes : none
 ; ------------------------------------------------------------
 ClearBuffer:
@@ -197,8 +210,11 @@ ClearBuffer:
         xor di, di
         mov al, COL_SKY
         mov ah, al
-        mov cx, FB_BYTES/2
+        mov cx, 192*SCREEN_W/2      ; 192 rows of sky ...
         cld
+        rep stosw
+        xor ax, ax
+        mov cx, 8*SCREEN_W/2        ; ... and the bottom 8 rows stay black (A.1)
         rep stosw
         pop es
         pop di
@@ -242,7 +258,7 @@ FlipBuffer:
 ; ------------------------------------------------------------
 ; KbdISR   hardware interrupt, not called directly
 ; Purpose : read the scan code from port 60h and keep key_table
-;           (1 = held). Bit 7 set = key released. The E0h prefix
+;           (1 = held) and key_hit (1 = pressed since last asked). Bit 7 set = key released. The E0h prefix
 ;           byte of the arrow keys is ignored.
 ; ------------------------------------------------------------
 KbdISR:
@@ -261,7 +277,10 @@ KbdISR:
         xor bh, bh
         test al, 80h
         jnz .release
-        mov byte [key_table+bx], 1
+        cmp byte [key_table+bx], 0
+        jne .held                   ; typematic repeat of a held key: no new hit
+        mov byte [key_hit+bx], 1    ; a NEW key press, remembered until it is read
+.held:  mov byte [key_table+bx], 1
         jmp .eoi
 .release:
         mov byte [key_table+bx], 0
@@ -444,9 +463,51 @@ UpdateClock:
         ret
 
 ; ------------------------------------------------------------
-; ResetLevel  (Module 15)  /  NewGame (Module 15)   - stubs for now
+; KeyPressed(scancode)                                   Module 14
+; Purpose : "was this key pressed since I last asked?" The keyboard
+;           ISR sets key_hit when a key goes down, so even a quick
+;           tap between two frames is never lost. Reading clears the
+;           hit, and a held key does not repeat. Used for menus,
+;           P, Esc and Enter.
+; Inputs  : [bp+4] = scan code
+; Outputs : AX = 1 pressed, 0 not    Changes : AX only
 ; ------------------------------------------------------------
-ResetLevel:
-        ret
-NewGame:
+KeyPressed:
+        push bp
+        mov bp, sp
+        push bx
+        mov bx, [bp+4]
+        and bx, 7Fh
+        xor ax, ax
+        cmp byte [key_hit+bx], 0
+        je .no
+        mov byte [key_hit+bx], 0    ; consume it
+        mov ax, 1
+.no:    pop bx
+        pop bp
+        ret 2
+
+; ------------------------------------------------------------
+; ClearHits                                              Module 14
+; Purpose : forget all pending key presses (REP STOSW, 64 words).
+;           Called whenever the state changes, so a key pressed
+;           during the death animation does not fire later.
+; Inputs/Outputs : none      Changes : none
+; ------------------------------------------------------------
+ClearHits:
+        push ax
+        push cx
+        push di
+        push es
+        push cs
+        pop es
+        mov di, key_hit
+        xor ax, ax
+        mov cx, 64
+        cld
+        rep stosw
+        pop es
+        pop di
+        pop cx
+        pop ax
         ret
