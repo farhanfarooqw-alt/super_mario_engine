@@ -446,21 +446,27 @@ WaitTick:
 ; ------------------------------------------------------------
 UpdateClock:
         push ax
+        push bx
         mov ax, [tick_count]
+        mov bx, ax
+        sub ax, [clock_last]        ; elapsed timer ticks, modulo 65536
+        mov [clock_last], bx
         cmp byte [clock_run], 0
-        jne .run
-        mov [clock_last], ax        ; frozen: do not collect time
-        jmp .out
-.run:   mov ax, [tick_count]
-        sub ax, [clock_last]
-        cmp ax, TICKS_PER_SEC
-        jb .out
-        add word [clock_last], TICKS_PER_SEC
+        je .out                     ; keep the partial second during pause
+        add ax, [clock_partial]
+.count: cmp ax, TICKS_PER_SEC
+        jb .save
+        sub ax, TICKS_PER_SEC
         cmp word [clock_secs], 0
-        je .out                     ; Module 15 will notice 0 and kill Mario
+        je .count
         dec word [clock_secs]
-.out:   pop ax
+        jmp .count
+.save:  mov [clock_partial], ax
+.out:   pop bx
+        pop ax
         ret
+
+clock_partial dw 0                  ; ticks accumulated towards next second
 
 ; ------------------------------------------------------------
 ; KeyPressed(scancode)                                   Module 14
