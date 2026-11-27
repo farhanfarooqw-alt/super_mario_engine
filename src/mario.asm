@@ -44,9 +44,12 @@ main:
         mov bl, [game_state]
         cmp bl, ST_EXIT
         je .quit
+        cmp bl, ST_PLAYING
+        je .dispatch
+        call UpdateClock            ; frozen states track ticks without counting down
+.dispatch:
         shl bx, 1
-        call word [state_table+bx]  ; jump table indexed by the state number
-        call UpdateClock            ; 6  one second per TICKS_PER_SEC ticks
+        call word [state_table+bx]  ; Playing updates the clock before drawing
         jmp .frame
 .quit:  call ShutdownEngine         ; restores vectors, timer, text mode
         mov ax, 4C00h

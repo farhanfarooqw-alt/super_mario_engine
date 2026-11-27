@@ -46,6 +46,7 @@ SetState:
         push ax
         mov ax, [bp+4]
         mov [game_state], al
+        mov byte [clock_run], 0     ; transitions freeze the clock
         mov word [state_timer], 0
         mov byte [screen_dirty], 1
         call ClearHits              ; old key presses must not leak into the new state
@@ -76,6 +77,7 @@ ResetLevel:
         mov word [clock_secs], LEVEL_TIME
         mov ax, [tick_count]
         mov [clock_last], ax
+        mov word [clock_partial], 0
         mov byte [clock_run], 0
         pop ax
         ret
@@ -188,6 +190,7 @@ DrawBrickBorder:
 
 DrawTitleScreen:
         push ax
+        push dx
         call ClearBuffer
         call DrawBrickBorder
         text 30, 38, txt_super, COL_BLACK, 3     ; shadow
@@ -229,7 +232,8 @@ DrawTitleScreen:
         push dx
         push word 2
         call TxtStr
-        text 24, 168, txt_team, COL_BLACK, 1
+        text 80, 168, txt_team, COL_BLACK, 1
+        pop dx
         pop ax
         ret
 
@@ -237,77 +241,119 @@ DrawTitleScreen:
 ; PLAYING  (frame order of Manual 5.13)
 ; ============================================================
 StatePlaying:
-        mov byte [clock_run], 1     ; the clock counts only while playing
         keyp SC_P
         test ax, ax
         jz .noP
         goto ST_PAUSED
+        call UpdateClock            ; freeze, keep fractional second
         ret
 .noP:   keyp SC_ESC
         test ax, ax
         jz .noEsc
         goto ST_TITLE
+        call UpdateClock
         ret
 .noEsc:
-        ; ---- debug keys (listed in the README) ----
+        mov byte [clock_run], 1
+        ; Debug keys: exercise state transitions during the demo.
         keyp SC_K
         test ax, ax
         jz .noK
-        mov byte [hero_dead], 1     ; K = kill Mario
+        mov byte [hero_dead], 1
+        jmp .death
 .noK:   keyp SC_W
         test ax, ax
         jz .noW
-        mov byte [level_won], 1     ; W = touch the flag
+        mov byte [level_won], 1
+        push word 100              ; debug flag uses lowest reward
+        call AddScore
+        jmp .win
 .noW:   keyp SC_T
         test ax, ax
         jz .noT
-        mov word [clock_secs], 5    ; T = clock to 5 seconds
+        mov word [clock_secs], 5
 .noT:
-        call UpdateMario            ; 3  hero
-        call UpdateEnemies          ; 4  enemies, shells, mushrooms
-        call ResolveCollisions      ; 5  stomp, damage, kick, collect, score
-        cmp word [clock_secs], 0    ; 6/7 clock at 0 kills Mario (Manual 5.10)
-        ja .timeOk
+        call UpdateMario
+        call UpdateEnemies
+        call ResolveCollisions
+        cmp byte [hero_dead], 0
+        jne .death
+        cmp byte [level_won], 0
+        jne .win
+        call UpdateClock           ; clock and HUD updated in this frame
+        cmp word [clock_secs], 0
+        jne .draw
         mov byte [hero_dead], 1
-.timeOk:
-        cmp byte [hero_dead], 0     ; 7  death and flag checks
-        je .alive
         goto ST_DYING
         ret
-.alive: cmp byte [level_won], 0
-        je .go
-        goto ST_WIN
+.death: goto ST_DYING
+        call UpdateClock           ; no clock decrement during death
         ret
-.go:    call UpdateCamera           ; 8
-        call DrawWorld              ; 9
-        call FlipBuffer             ; 10
+.win:   goto ST_WIN
+        call UpdateClock           ; no clock decrement after flag
+        ret
+.draw:  call UpdateCamera
+        call DrawWorld
+        call FlipBuffer
         ret
 
-; DrawWorld : clear, tiles, hero, HUD  (enemies/items: Person 3's DrawEntities later)
+; DrawWorld - render tiles, entities, hero and HUD in that order.
+; Inputs: current game state and shared world data. Outputs: frame buffer.
+; Registers changed: none.
 DrawWorld:
         call ClearBuffer
         call DrawMap
-        call DrawHeroTemp
-        call DrawHUD
+        call DrawEntities
+        cmp byte [game_state], ST_DYING
+        je .animation
+        cmp byte [game_state], ST_WIN
+        je .animation
+        call DrawHero
+        jmp .hud
+.animation:
+        call DrawStateHero
+.hud:   call DrawHUD
+        ; The bottom eight rows are outside the playable map.
+        rect 0, PIT_Y, SCREEN_W, SCREEN_H-PIT_Y, COL_BLACK
         ret
 
-; DrawHeroTemp : TEMPORARY red box in place of Mario until Person 2's sprites
-;   and Person 3's DrawHero exist.  screen_x = world_x - camera_x
-DrawHeroTemp:
+; DrawStateHero - draw the death/flag animation without invulnerability blink.
+; Inputs: hero fields, camera, state_timer. Outputs: frame buffer.
+; Registers changed: none.
+DrawStateHero:
         push ax
         push bx
+        push cx
         mov ax, [hero_x]
         sub ax, [camera_x]
-        mov bx, 16
-        cmp byte [hero_form], FORM_SMALL
-        je .h
-        mov bx, 32
-.h:     push ax
+        mov bx, spr_small_jump
+        cmp byte [hero_form], FORM_SUPER
+        jne .choose
+        mov bx, spr_super_jump
+.choose:
+        xor cx, cx
+        cmp byte [game_state], ST_WIN
+        jne .facing
+        ; After sliding down the pole, Mario leaves the level.
+        cmp word [state_timer], WIN_SLIDE_FRAMES
+        jbe .draw
+        cmp word [hero_x], LEVEL_PX-TILE
+        jae .out
+        mov bx, spr_small_run
+        cmp byte [hero_form], FORM_SUPER
+        jne .draw
+        mov bx, spr_super_run
+        jmp .draw
+.facing:
+        cmp byte [hero_face], 0
+        jne .draw
+        inc cx
+.draw:  push ax
         push word [hero_y]
-        push word 16
         push bx
-        push word 12
-        call FillRect
+        push cx
+        call DrawSprite
+.out:   pop cx
         pop bx
         pop ax
         ret
@@ -382,7 +428,11 @@ StateLifeLost:
         je .wait
         rect 0, 0, 320, 200, COL_BLACK
         text 88, 50, txt_world, 15, 2
-        rect 120, 90, 16, 16, 12                ; TEMP Mario icon
+        push word 120
+        push word 90
+        push word spr_small_stand
+        push word 0
+        call DrawSprite
         text 168, 90, txt_x, 15, 2
         xor ax, ax
         mov al, [lives]
@@ -414,6 +464,9 @@ EnterWin:
         mov word [hero_x], FLAG_COL*TILE        ; snap to the pole
         mov word [hero_vx], 0
         mov word [hero_vy], 0
+        mov byte [hero_x_fr], 0
+        mov byte [hero_y_fr], 0
+        call UpdateCamera
         ret
 
 StateWin:
@@ -423,20 +476,28 @@ StateWin:
         mov ax, [state_timer]
         cmp ax, WIN_SLIDE_FRAMES
         ja .walk
-        mov dx, 144                 ; feet on the ground: top = 160 - height
+        mov dx, 128                 ; feet at flag base (y=144)
         cmp byte [hero_form], FORM_SMALL
         je .s
-        mov dx, 128
+        mov dx, 112
 .s:     mov ax, [hero_y]
         cmp ax, dx
-        jge .draw
-        add ax, 3                   ; slide down 3 px per frame
+        jge .base
+        add ax, 4                   ; slide down to base in about one second
         cmp ax, dx
         jle .st
-        mov ax, dx
+.base: mov ax, dx
 .st:    mov [hero_y], ax
         jmp .draw
-.walk:  add word [hero_x], 2        ; walk towards the castle door
+.walk:  cmp word [hero_x], LEVEL_PX-TILE
+        jae .walktime
+        add word [hero_x], 2        ; leave the level to the right
+        mov dx, START_Y_FEET-TILE
+        cmp byte [hero_form], FORM_SUPER
+        jne .ground
+        sub dx, TILE
+.ground: mov [hero_y], dx
+.walktime:
         cmp ax, WIN_SLIDE_FRAMES+WIN_WALK_FRAMES
         jb .draw
         goto ST_COMPLETE
@@ -594,7 +655,7 @@ txt_super       db 'SUPER MARIO', 0
 txt_engine      db 'ENGINE', 0
 txt_start       db 'START GAME', 0
 txt_exit        db 'EXIT', 0
-txt_team        db 'Group #XX  Names of the team here', 0
+txt_team        db 'Farhan Ahsan Haroon', 0
 txt_paused      db 'PAUSED', 0
 txt_resume      db 'Press P to resume', 0
 txt_world       db 'WORLD 1-1', 0
