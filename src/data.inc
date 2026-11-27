@@ -3,7 +3,7 @@
 ; everybody else only reads.
 ; ============================================================
 
-; ---- Engine (Person 1 writes) ----
+; ---- Engine (P1 ) ----
 game_state      db ST_TITLE
 fb_seg          dw 0                ; frame buffer segment (INT 21h AH=48h)
 tick_count      dw 0                ; incremented by timer ISR
@@ -28,16 +28,16 @@ font_off        dw 0                ; BIOS 8x8 font (INT 10h AX=1130h)
 font_seg        dw 0
 glyph_buf       times 8 db 0        ; one character copied from the font
 
-; ---- Camera (Person 2 writes) ----
+; ---- Camera (P2) ----
 camera_x        dw 0
 
-; ---- Score and counters (Person 2 writes through AddScore) ----
+; ---- Score and counters (P 2 through AddScore) ----
 score_lo        dw 0                ; 32-bit score, ADD/ADC
 score_hi        dw 0
 coins           db 0
 lives           db START_LIVES
 
-; ---- Hero (Person 3 writes) ----
+; ---- Hero (P3) ----
 ; Position = whole pixels (word) + fraction (byte). Velocity = 8.8 word.
 ; (A pure 8.8 position cannot reach x = 944, so only velocity is 8.8.)
 hero_x          dw START_X
@@ -55,13 +55,13 @@ hero_stomp      dw 0                ; stomp chain counter
 hero_dead       db 0                ; 1 = Mario must die (Person 3 sets, Person 1 reads)
 level_won       db 0                ; 1 = flag touched   (Person 3 sets, Person 1 reads)
 
-; ---- Enemies (Person 3 writes) ----
+; ---- Enemies (P 3) ----
 enemy_table     times ENEMY_COUNT*ENEMY_SIZE db 0
 
-; ---- Map: original is never changed, working copy is (Person 2 owns) ----
+; ---- Map: original is never changed, working copy is (P2 owns) ----
 ; map_original and level data are included from level.inc later.
 map_working     times MAP_SIZE db 0
 
-; ---- Temporary Stage-2 test data (Person 1; removed when Module 14 is done) ----
+; ---- Temporary Stage-2 test data (P1; removed when Module 14 is done) ----
 demo_x          dw 100
 msg_nomem       db 'Not enough memory to run the game.', 13, 10, '$'
