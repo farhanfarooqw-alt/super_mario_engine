@@ -31,12 +31,9 @@ counted twice. Person 1 writes `hero_y` / `hero_vy` only in the DYING and WIN st
 
 * **invulnerability timer**: `UpdateMario` already decrements `hero_invuln` once per frame.
   Person 1 must NOT decrement it again in frame step 6.
-* **Person 2: `AddCoin` and `AddLife`** do not exist in world.asm yet.
-  Until then `GiveCoin` keeps a private counter `p3_coins` (test only) and `GiveLife`
-  writes `lives` directly (the only line of Person 3 that writes a Person 2 variable).
-  When Person 2 adds the procedures, only `GiveCoin` / `GiveLife` change.
-* **Person 2: sprites.** `DrawHero` / `DrawEntities` draw coloured rectangles. Replace the
-  `FillRect` calls with `DrawSprite` when sprites.inc is merged.
+* Person 2 integration: `GivePoints` calls `AddScore`; `GiveCoin` awards 200 points and calls `AddCoin`; `GiveLife` calls `AddLife`. There are no private score or coin counters.
+* `DrawHero` selects Small/Super standing, running or jumping pose and mirrors left. `DrawEntities` uses the shared enemy, shell, mushroom and coin sprites.
+* `test_p3.asm` uses `UpdateCamera`, `DrawHUD` and includes `text.asm`. The final state-machine renderer still needs Person 1 to call `DrawHero` and `DrawEntities`.
 
 ## Other procedures in gameplay.asm (internal)
 
@@ -59,9 +56,8 @@ Module 12: `HeadHitBlock`, `HitBlock`, `SpawnMushroom`, `HeroGrow`, `CollectMapC
 
 ## Private constants and variables (end of gameplay.asm)
 
-Constants: HITBOX_L/R/W, ET_* (types), ES_* (states), ENEMY_FALL, COL_* (temporary colours).
-Variables: `stomp_table`, `flag_points`, `p3_prev_feet`, `p3_stomped`, `p3_score_lo/hi`,
-`p3_coins`, `p3_pop_x/y/t`.
+Constants: HITBOX_L/R/W, ET_* (types), ES_* (states), ENEMY_FALL, 
+Variables: `stomp_table`, `flag_points`, `p3_prev_feet`, `p3_stomped`, `p3_pop_x/y/t`.
 
 ## Shared-file changes by Person 3
 

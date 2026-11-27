@@ -9,7 +9,7 @@
 ;   Module 10 : tile collision (HeroXCollide, HeroYCollide), RectOverlap
 ;   Module 11 : ResetEnemies, UpdateEnemies, ResolveCollisions
 ;   Module 12 : blocks, coins, mushroom, flag pole
-;   Drawing   : DrawHero, DrawEntities (rectangles until DrawSprite)
+;   Drawing   : DrawHero, DrawEntities (Person 2 sprite renderer)
 ; ============================================================
 
 ; ---- private constants of Person 3 ----
@@ -26,12 +26,6 @@ ES_FLAT         equ 2               ; flat Goomba (EN_TIMER counts down)
 ES_SHELL        equ 3               ; stationary shell (EN_TIMER = grace)
 ES_SLIDE        equ 4               ; sliding shell (EN_TIMER = grace)
 ENEMY_FALL      equ 2               ; enemies fall 2 pixels per frame
-COL_HERO_SMALL  equ 4               ; temporary colours (no sprites yet)
-COL_HERO_SUPER  equ 12
-COL_GOOMBA      equ 6
-COL_KOOPA       equ 2
-COL_SHELL       equ 10
-COL_MUSH        equ 13
 
 ; ------------------------------------------------------------
 ; ResetHero
@@ -636,57 +630,29 @@ SpawnMushroom:
     ret 4
 
 ; ------------------------------------------------------------
-; GivePoints(points)
-; Purpose : the ONE place where Person 3 gives points. Calls
-;           Person 2's AddScore and also keeps a private copy in
-;           p3_score_lo/hi that only test_p3.asm displays.
-; Inputs  : [bp+4] = points (word)
-; Outputs : none      Registers changed : none
+; GivePoints(points) - add points through the shared 32-bit score.
+; Inputs: [bp+4] points. Outputs: score. Registers changed: none.
 ; ------------------------------------------------------------
 GivePoints:
     push bp
     mov bp, sp
-    push ax
-    mov ax, [bp+4]
-    add [p3_score_lo], ax
-    adc word [p3_score_hi], 0
-    push ax
-    call AddScore                   ; Person 2 (32-bit, clamped)
-    pop ax
+    push word [bp+4]
+    call AddScore
     pop bp
     ret 2
 
-; ------------------------------------------------------------
-; GiveCoin
-; Purpose : one coin collected: +200 points and coins + 1. At 100
-;           coins the counter returns to 0 and Mario gets a life.
-;           (p3_coins is private; when Person 2 adds AddCoin, call
-;           it here in place of the p3_coins lines.)
-; Inputs  : none      Outputs : none      Registers changed : none
-; ------------------------------------------------------------
+; GiveCoin - +200 points and one coin, using Person 2 counters.
+; Inputs: none. Outputs: score, coins, lives. Registers changed: none.
 GiveCoin:
     push word 200
     call GivePoints
-    inc byte [p3_coins]
-    cmp byte [p3_coins], 100
-    jb .done
-    mov byte [p3_coins], 0          ; 100 coins: back to 0 ...
-    call GiveLife                   ; ... and one extra life
-.done:
+    call AddCoin
     ret
 
-; ------------------------------------------------------------
-; GiveLife
-; Purpose : lives + 1, never above MAX_LIVES (99).
-;           NOTE: "lives" belongs to Person 2; this is the only line
-;           of my code that writes it (ask Person 2 for AddLife).
-; Inputs  : none      Outputs : none      Registers changed : none
-; ------------------------------------------------------------
+; GiveLife - extra life, capped by Person 2's AddLife.
+; Inputs: none. Outputs: lives. Registers changed: none.
 GiveLife:
-    cmp byte [lives], MAX_LIVES
-    jae .done
-    inc byte [lives]
-.done:
+    call AddLife
     ret
 
 ; ------------------------------------------------------------
@@ -1165,9 +1131,13 @@ ResolveCollisions:
     jne .done
     mov byte [p3_stomped], 0        ; no stomp yet in this frame
     call ResolveEnemies             ; stomp, hurt, kick, mushroom
+    cmp byte [hero_dead], 0
+    jne .done
     call ResolveShells              ; sliding shell kills enemies
     call CollectMapCoins            ; coin tiles
     call CheckPit                   ; fell below the map
+    cmp byte [hero_dead], 0
+    jne .done
     call CheckFlag                  ; flag pole
 .done:
     ret
@@ -1192,9 +1162,12 @@ ResolveEnemies:
     je .n
     push bx
     call ResolveOne
+    cmp byte [hero_dead], 0
+    jne .finish
 .n:
     add bx, ENEMY_SIZE
     loop .l
+.finish:
     pop cx
     pop bx
     ret
@@ -1619,18 +1592,11 @@ CheckFlag:
     ret
 
 ; ============================================================
-; DRAWING (frame step 9) - coloured rectangles until Person 2's
-; DrawSprite and sprites.inc are merged
+; DRAWING (frame step 9) - Person 2 sprite bitmaps
 ; ============================================================
 
-; ------------------------------------------------------------
-; DrawHero
-; Purpose : draw Mario into the frame buffer at screen x = hero_x -
-;           camera_x (only when -16 < screen x < 320). While
-;           invulnerable he blinks (drawn only on some frames). A
-;           white "eye" shows the facing direction.
-; Inputs/Outputs : none      Registers changed : none
-; ------------------------------------------------------------
+; DrawHero - choose a pose and render at world x minus camera x.
+; Inputs: hero fields, camera. Outputs: frame buffer. Changes: none.
 DrawHero:
     push ax
     push bx
@@ -1638,43 +1604,49 @@ DrawHero:
     push dx
     mov ax, [hero_invuln]
     test ax, ax
-    jz .show
-    test al, 2                      ; blink: hidden on every other pair
+    jz .visible
+    test al, 1                      ; alternate frames while invulnerable
     jnz .done
-.show:
+.visible:
     mov dx, [hero_x]
-    sub dx, [camera_x]              ; DX = screen x
+    sub dx, [camera_x]
     cmp dx, -TILE
     jle .done
     cmp dx, SCREEN_W
     jge .done
-    call HeroHeight
-    mov bx, ax                      ; BX = height
-    mov cx, COL_HERO_SMALL
+    mov bx, spr_small_stand
     cmp byte [hero_form], FORM_SUPER
-    jne .col
-    mov cx, COL_HERO_SUPER
-.col:
+    je .super
+    cmp byte [hero_on_ground], 0
+    je .smalljump
+    cmp word [hero_vx], 0
+    je .pose
+    mov bx, spr_small_run
+    jmp .pose
+.smalljump:
+    mov bx, spr_small_jump
+    jmp .pose
+.super:
+    mov bx, spr_super_stand
+    cmp byte [hero_on_ground], 0
+    je .superjump
+    cmp word [hero_vx], 0
+    je .pose
+    mov bx, spr_super_run
+    jmp .pose
+.superjump:
+    mov bx, spr_super_jump
+.pose:
+    xor cx, cx
+    cmp byte [hero_face], 0
+    jne .draw
+    inc cx                          ; bit 0 mirrors the right-facing sprite
+.draw:
     push dx
     push word [hero_y]
-    push word TILE
     push bx
     push cx
-    call FillRect                   ; body
-    mov ax, dx
-    add ax, 3
-    cmp byte [hero_face], 0
-    je .eye
-    add ax, 6                       ; facing right: eye on the right
-.eye:
-    push ax
-    mov ax, [hero_y]
-    add ax, 3
-    push ax
-    push word 4
-    push word 4
-    push word COL_TEXT              ; white eye
-    call FillRect
+    call DrawSprite
 .done:
     pop dx
     pop cx
@@ -1682,52 +1654,45 @@ DrawHero:
     pop ax
     ret
 
-; ------------------------------------------------------------
-; DrawEntities
-; Purpose : draw every active enemy, shell and mushroom, and the
-;           coin pop-up, into the frame buffer.
-; Inputs/Outputs : none      Registers changed : none
-; ------------------------------------------------------------
+; DrawEntities - render active records and the rising coin sprite.
+; Inputs: enemy_table, pop-up fields. Outputs: frame buffer. Changes: none.
 DrawEntities:
     push ax
     push bx
     push cx
     mov bx, enemy_table
     mov cx, ENEMY_COUNT
-.l:
+.next:
     cmp byte [bx+EN_TYPE], ET_NONE
-    je .n
+    je .skip
     cmp byte [bx+EN_STATE], ES_IDLE
-    je .n
+    je .skip
     push bx
     call DrawOneEntity
-.n:
+.skip:
     add bx, ENEMY_SIZE
-    loop .l
+    loop .next
     cmp byte [p3_pop_t], 0
     je .done
     mov ax, [p3_pop_x]
     sub ax, [camera_x]
-    add ax, 4                       ; a coin is narrower than a tile
+    cmp ax, -TILE
+    jle .done
+    cmp ax, SCREEN_W
+    jge .done
     push ax
     push word [p3_pop_y]
-    push word 8
-    push word 12
-    push word COL_COIN
-    call FillRect
+    push word spr_coin
+    push word 0
+    call DrawSprite
 .done:
     pop cx
     pop bx
     pop ax
     ret
 
-; ------------------------------------------------------------
-; DrawOneEntity(record)
-; Purpose : draw one record as a coloured rectangle: Goomba brown
-;           (flat = half height), Koopa green, shell light green,
-;           mushroom magenta. Only when -16 < screen x < 320.
-; Inputs  : [bp+4] = address of the record      Registers changed : none
-; ------------------------------------------------------------
+; DrawOneEntity(record) - choose bitmap by type and state.
+; Inputs: [bp+4] record address. Outputs: frame buffer. Changes: none.
 DrawOneEntity:
     push bp
     mov bp, sp
@@ -1735,46 +1700,42 @@ DrawOneEntity:
     push bx
     push cx
     push dx
-    push si
     mov bx, [bp+4]
-    mov ax, [bx+EN_X]
-    sub ax, [camera_x]
-    cmp ax, -TILE
+    mov dx, [bx+EN_X]
+    sub dx, [camera_x]
+    cmp dx, -TILE
     jle .out
-    cmp ax, SCREEN_W
+    cmp dx, SCREEN_W
     jge .out
-    mov si, ax                      ; SI = screen x
-    mov cx, TILE                    ; CX = height
-    mov dx, [bx+EN_Y]               ; DX = top y
-    mov ax, COL_GOOMBA              ; AX = colour
+    mov ax, spr_goomba
     cmp byte [bx+EN_TYPE], ET_MUSH
     je .mush
     cmp byte [bx+EN_TYPE], ET_KOOPA
     je .koopa
     cmp byte [bx+EN_STATE], ES_FLAT
-    jne .draw
-    mov cx, 8                       ; flat Goomba: half height
-    add dx, 8
-    jmp .draw
+    jne .flags
+    mov ax, spr_goomba_flat
+    jmp .flags
 .mush:
-    mov ax, COL_MUSH
-    jmp .draw
+    mov ax, spr_mushroom
+    jmp .flags
 .koopa:
-    mov ax, COL_KOOPA
+    mov ax, spr_koopa
     cmp byte [bx+EN_STATE], ES_WALK
-    je .draw
-    mov ax, COL_SHELL               ; shell: lower and lighter
-    mov cx, 12
-    add dx, 4
+    je .flags
+    mov ax, spr_shell
+.flags:
+    xor cx, cx
+    cmp byte [bx+EN_DIR], 0
+    jne .draw
+    inc cx
 .draw:
-    push si
     push dx
-    push word TILE
-    push cx
+    push word [bx+EN_Y]
     push ax
-    call FillRect
+    push cx
+    call DrawSprite
 .out:
-    pop si
     pop dx
     pop cx
     pop bx
@@ -1789,9 +1750,6 @@ stomp_table     dw 100, 200, 400, 500, 800, 1000, 2000, 4000, 5000, 8000
 flag_points     dw 5000, 5000, 5000, 5000, 2000, 800, 400, 400, 100, 100, 100, 100
 p3_prev_feet    dw 0                ; Mario's feet in the previous frame
 p3_stomped      db 0                ; 1 = a stomp already happened this frame
-p3_score_lo     dw 0                ; private score copy (test display)
-p3_score_hi     dw 0
-p3_coins        db 0                ; private coin counter (see GiveCoin)
 p3_pop_x        dw 0                ; coin pop-up: world x, y and frames left
 p3_pop_y        dw 0
 p3_pop_t        db 0
