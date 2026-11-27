@@ -1,6 +1,6 @@
 ; ============================================================
 ; world.asm  -  PERSON 2  (Modules 3, 4, 6, 13)
-; Stubs for now. Convention: see docs/CONVENTIONS.md
+; Convention: see docs/CONVENTIONS.md
 ; ============================================================
 
 ; NOTE: PutPixel and FillRect (Module 2) are written by Person 1 in engine.asm.
@@ -86,11 +86,8 @@ SetTile:
 
 ; ------------------------------------------------------------
 ; DrawTile(x, y, code)                                 Module 3
-; Purpose : draw ONE 16x16 tile into the frame buffer at screen
-;           position (x, y) (top-left, signed, may be partly off-
-;           screen: FillRect clips). For now a tile is a coloured
-;           rectangle taken from tile_colour (looked up by tile
-;           code); Module 4 replaces it with real art.
+; Purpose : draw one bitmap tile into the frame buffer at signed
+;           screen coordinates, using the tile pointer table.
 ;           Sky is not drawn (ClearBuffer already made the sky).
 ; Inputs  : [bp+8] = x   [bp+6] = y   [bp+4] = tile code
 ; Outputs : none
@@ -99,30 +96,32 @@ SetTile:
 DrawTile:
         push bp
         mov bp, sp
-        push ax
         push bx
-        mov bx, [bp+4]              ; tile code
+        mov bx, [bp+4]
         cmp bx, T_SKY
-        je .out                     ; sky: nothing to draw
+        je .out
         cmp bx, T_FLAG
-        ja .out                     ; unknown code: ignore (unsigned)
-        mov al, [tile_colour+bx]    ; colour index for this tile
-        xor ah, ah
-        push word [bp+8]            ; x
-        push word [bp+6]            ; y
-        push word TILE              ; w
-        push word TILE              ; h
-        push ax                     ; colour
-        call FillRect
+        ja .out
+        shl bx, 1
+        mov bx, [tile_sprites+bx]
+        cmp word [bp+4], T_FLAG
+        jne .draw
+        cmp word [bp+6], 2*TILE
+        jne .draw
+        mov bx, tile_flag_top
+.draw:  push word [bp+8]
+        push word [bp+6]
+        push bx
+        push word 0
+        call DrawSprite
 .out:   pop bx
-        pop ax
         pop bp
         ret 6
 
-; tile_colour : default-palette colour for each tile code 0..12
-;   sky ground brick ?coin ?mush empty pipeTL pipeTR pipeBL pipeBR stair coin flag
-tile_colour:
-        db COL_SKY, COL_GROUND, COL_BRICK, 12, 12, 8, 10, 10, COL_PIPE, COL_PIPE, 7, COL_COIN, COL_TEXT
+tile_sprites:
+        dw 0, tile_ground, tile_brick, tile_q, tile_q, tile_empty
+        dw tile_pipetl, tile_pipetr, tile_pipebl, tile_pipebr
+        dw tile_stair, spr_coin, tile_flag
 
 ; ------------------------------------------------------------
 ; DrawMap                                              Module 3 / 6
@@ -222,26 +221,232 @@ ResetMap:
         pop cx
         ret
 
-; DrawSprite(x, y, addr, flags)                Module 4
-;   [bp+10]=x [bp+8]=y [bp+6]=addr [bp+4]=flags (bit0 = mirror)
+; ------------------------------------------------------------
+; DrawSprite(x, y, addr, flags) - Module 4
+; Purpose: draw a bitmap with transparency, mirroring and clipping.
+; Inputs: [bp+10]=x, [bp+8]=y, [bp+6]=bitmap, [bp+4]=flags
+; Flags: bit 0 mirror, bit 1 blink (skip odd timer ticks).
+; Bitmap: width byte, height byte, then width*height colour bytes.
+; Outputs: none. Registers changed: none.
+; ------------------------------------------------------------
 DrawSprite:
-    push bp
-    mov bp, sp
-    pop bp
-    ret 8
+        push bp
+        mov bp, sp
+        push ax
+        push bx
+        push cx
+        push dx
+        push si
+        push di
+        push es
+        sub sp, 4                  ; [bp-16] width, [bp-18] rows remaining
+        test word [bp+4], 2
+        jz .setup
+        test word [tick_count], 1
+        jnz .out
+.setup: mov si, [bp+6]
+        xor ax, ax
+        mov al, [si]
+        mov [bp-16], ax
+        mov al, [si+1]
+        mov [bp-18], ax
+        add si, 2
+        mov dx, [bp+8]
+        mov es, [fb_seg]
+        cld
+.row:   cmp word [bp-18], 0
+        je .out
+        cmp dx, SCREEN_H
+        jae .skiprow               ; unsigned rejects negative y too
+        mov ax, dx
+        mov di, ax
+        shl di, 8
+        shl ax, 6
+        add di, ax                 ; row start = y*320
+        mov bx, [bp+10]
+        mov cx, [bp-16]
+        test word [bp+4], 1
+        jz .normal
+        add bx, cx
+        dec bx
+.mirror: jcxz .nextrow
+        lodsb
+        test al, al
+        jz .mnext
+        cmp bx, SCREEN_W
+        jae .mnext
+        mov [es:di+bx], al
+.mnext: dec bx
+        loop .mirror
+        jmp .nextrow
+.normal: jcxz .nextrow
+        lodsb
+        test al, al
+        jz .nnext
+        cmp bx, SCREEN_W
+        jae .nnext
+        mov [es:di+bx], al
+.nnext: inc bx
+        loop .normal
+        jmp .nextrow
+.skiprow:
+        add si, [bp-16]
+.nextrow:
+        inc dx
+        dec word [bp-18]
+        jmp .row
+.out:   add sp, 4
+        pop es
+        pop di
+        pop si
+        pop dx
+        pop cx
+        pop bx
+        pop ax
+        pop bp
+        ret 8
 
-; UpdateCamera    rule of Section 5.3, once per frame   Module 6
+; UpdateCamera - Module 6. Inputs: shared hero position and camera.
+; Outputs: camera_x, and hero left-edge correction per Section 5.3.
+; Changes: no registers. Shared hero writes are limited to edge clamp.
 UpdateCamera:
-    ret
+        push ax
+        mov ax, [hero_x]
+        cmp ax, [camera_x]
+        jge .follow
+        mov ax, [camera_x]
+        mov [hero_x], ax
+        mov byte [hero_x_fr], 0
+        mov word [hero_vx], 0
+.follow:
+        sub ax, CAM_FOLLOW_X
+        cmp ax, [camera_x]
+        jle .done
+        cmp ax, CAM_MAX
+        jle .store
+        mov ax, CAM_MAX
+.store: mov [camera_x], ax
+.done:  pop ax
+        ret
 
-; AddScore(points)    32-bit ADD/ADC, clamp 999,999     Module 13
-;   [bp+4]=points (word)
+; AddScore(points) - Module 13. [bp+4] = unsigned word points.
+; Outputs: updated 32-bit score, clamped at 999999. Changes: none.
 AddScore:
-    push bp
-    mov bp, sp
-    pop bp
-    ret 2
+        push bp
+        mov bp, sp
+        push ax
+        mov ax, [bp+4]
+        add [score_lo], ax
+        adc word [score_hi], 0
+        jc .clamp
+        cmp word [score_hi], MAX_SCORE_HI
+        ja .clamp
+        jb .done
+        cmp word [score_lo], MAX_SCORE_LO
+        jbe .done
+.clamp: mov word [score_hi], MAX_SCORE_HI
+        mov word [score_lo], MAX_SCORE_LO
+.done:  pop ax
+        pop bp
+        ret 2
 
-; DrawHUD     score, coins, world, time, lives, hearts  Module 13
+; AddCoin - no inputs; increment coin counter, award life at 100.
+; Outputs: coins/lives. Changes: no registers. Score awarded separately.
+AddCoin:
+        inc byte [coins]
+        cmp byte [coins], 100
+        jb .done
+        mov byte [coins], 0
+        call AddLife
+.done:  ret
+
+; AddLife - no inputs. Outputs: lives capped at 99. Changes: none.
+AddLife:
+        cmp byte [lives], MAX_LIVES
+        jae .done
+        inc byte [lives]
+.done:  ret
+
+; DrawHUD - Module 13. Reads score, coins, lives, HP, clock.
+; Outputs: 16-pixel HUD in frame buffer; changes no registers.
+; Reuses the stack-based BIOS-font routines in text.asm.
+%macro hud_text 3
+        push word %1
+        push word %2
+        push word %3
+        push word COL_TEXT
+        push word 1
+        call TxtStr
+%endmacro
+%macro hud_num 3
+        push word %1
+        push word 8
+        push word %2
+        push word %3
+        push word COL_TEXT
+        push word 1
+        call TxtNum
+%endmacro
 DrawHUD:
-    ret
+        push ax
+        push word 0
+        push word 0
+        push word SCREEN_W
+        push word HUD_H
+        push word COL_BLACK
+        call FillRect
+        hud_text 0,0,hud_score
+        hud_text 64,0,hud_coins
+        hud_text 120,0,hud_world
+        hud_text 176,0,hud_time
+        hud_text 224,0,hud_lives
+        hud_text 272,0,hud_health
+        push word 0
+        push word 8
+        push word [score_lo]
+        push word [score_hi]
+        push word COL_TEXT
+        push word 1
+        call TxtNum32
+        hud_text 64,8,hud_x
+        xor ax, ax
+        mov al, [coins]
+        hud_num 72,ax,2
+        hud_text 120,8,hud_worldnum
+        hud_num 176,[clock_secs],3
+        hud_text 224,8,hud_x
+        xor ax, ax
+        mov al, [lives]
+        hud_num 232,ax,2
+        mov ax, spr_heart_empty
+        cmp byte [hero_hp], 1
+        jb .heart1
+        mov ax, spr_heart_full
+.heart1: push word 280
+        push word 8
+        push ax
+        push word 0
+        call DrawSprite
+        mov ax, spr_heart_empty
+        cmp byte [hero_hp], 2
+        jb .heart2
+        mov ax, spr_heart_full
+.heart2: push word 296
+        push word 8
+        push ax
+        push word 0
+        call DrawSprite
+        pop ax
+        ret
+%unmacro hud_text 3
+%unmacro hud_num 3
+hud_score db 'SCORE',0
+hud_coins db 'COINS',0
+hud_world db 'WORLD',0
+hud_time db 'TIME',0
+hud_lives db 'LIVES',0
+hud_health db 'HP',0
+hud_x db 'x',0
+hud_worldnum db '1-1',0
+
+%include "src/sprites.inc"
