@@ -25,7 +25,7 @@ A side-scrolling platform game developed in 16-bit x86 Assembly Language using N
 
 Open the GitHub repository:
 
-https://github.com/farhanfarooqw-alt/super_mario_engine
+https://github.com/farhanfarooqw-alt/COAL-PROJECT_BCS-3B_25F-0804_25F-0722_25F-0555
 
 Click **Code → Download ZIP** and extract the downloaded folder.
 
